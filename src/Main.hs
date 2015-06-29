@@ -1,42 +1,37 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE TemplateHaskell #-}
 module Main where
 
--- import Database.LevelDB.Higher
 import Types
 import Point
+import Store
 import Web.Spock.Safe
 import Control.Monad.IO.Class
--- import Control.Monad.Trans.Ether.State.Strict
--- import Control.Monad.Ether.State.Class
--- import Control.Ether.TH
-import Control.Monad.State
-import qualified Control.Monad.State as S
+import Data.Aeson
+import qualified Database.LevelDB.Higher  as LDB
 
+conf = Config "./databases"
 
-data ST = ST
-  { name :: String
-  , age  :: Integer
-  } deriving (Show, Eq)
-
--- ethereal "App" "app"
--- ethereal "DB" "db"
-
-def = ST "hello" 1
+db = DBName "db"
 
 main :: IO ()
-main = runSpock 8080 $ spock ss poc def web
+main = do
+    let db = PCConn (ConnBuilder (open conf :: IO DB) close (PoolCfg 1 1 100))
+    let sessions = SessionCfg "app" 100 0 False "hello" Nothing
+    runSpock 8080 $ spock sessions db conf web
 
-type App = SpockM String String ST ()
+type App = SpockM DB String Config ()
 
 web :: App 
 web = do
     post "/write" $ do
         b <- body
-        liftIO $ print (parse b :: Either String Point)
-        st <- getState
-        let newst = st { age = (age st) + 1 }
-        liftIO $ print st
+        let Right p = parse b :: Either String Point
+        result <- runQuery (write db p)
+        liftIO $ print result
         bytes b
+    get "/query" $ do
+        q <- param' "q"
+        result <- runQuery (query db q)
+        liftIO $ print result
+
+
