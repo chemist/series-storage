@@ -1,23 +1,23 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Point where
 
-import qualified Data.Attoparsec.ByteString as A
-import Data.Attoparsec.ByteString.Char8 (decimal)
-import qualified Data.Attoparsec.Combinator as A
-import qualified Data.Map.Strict as Map
-import Data.Time.Clock
-import Data.Time.Clock.POSIX
-import Data.ByteString (ByteString, scanl1)
-import Data.Word
-import Types
-import System.IO.Unsafe (unsafePerformIO)
-import Control.Applicative ((<|>))
+import           Control.Applicative              ((<|>))
+import qualified Data.Attoparsec.ByteString       as A
+import           Data.Attoparsec.ByteString.Char8 (decimal)
+import qualified Data.Attoparsec.Combinator       as A
+import           Data.ByteString                  (ByteString, scanl1)
+import qualified Data.Map.Strict                  as Map
+import           Data.Time.Clock
+import           Data.Time.Clock.POSIX
+import           Data.Word
+import           System.IO.Unsafe                 (unsafePerformIO)
+import           Types
 
-import Debug.Trace
-import Prelude hiding (scanl1)
+import           Debug.Trace
+import           Prelude                          hiding (scanl1)
 
 instance Stored Point where
-    parse = A.parseOnly point 
+    parse = A.parseOnly point
 
 testPointBS :: ByteString
 testPointBS = "cpu,region=us-\\ west,host=serverA,env=prod,target=servers,zone=1c value=1"
@@ -67,7 +67,7 @@ convertToUTCTime :: Integer -> UTCTime
 convertToUTCTime = posixSecondsToUTCTime . fromIntegral
 
 escapedValue :: A.Parser ByteString
-escapedValue = A.scan False fun 
+escapedValue = A.scan False fun
   where
   fun True 44 = Just False
   fun True 32 = Just False

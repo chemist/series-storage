@@ -1,11 +1,11 @@
 {-# LANGUAGE FlexibleInstances #-}
 module Store where
 
-import Types
-import Data.Aeson
-import Database.LevelDB.Higher
+import           Data.Aeson
+import           Database.LevelDB.Higher
+import           Types
 
-data DB = DB 
+data DB = DB
 
 instance Store DB where
     open conf = print ("open db with conf: " ++ show conf) >> return DB

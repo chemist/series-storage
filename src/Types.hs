@@ -1,14 +1,14 @@
 {-# LANGUAGE RankNTypes #-}
 module Types where
 
-import Data.ByteString (ByteString)
-import Data.ByteString.Char8 (unpack)
-import Data.Map.Strict (Map)
-import Data.Time.Clock
-import Data.Time.Format
-import Data.Aeson
-import Web.PathPieces
-import Data.Text.Encoding
+import           Data.Aeson
+import           Data.ByteString       (ByteString)
+import           Data.ByteString.Char8 (unpack)
+import           Data.Map.Strict       (Map)
+import           Data.Text.Encoding
+import           Data.Time.Clock
+import           Data.Time.Format
+import           Web.PathPieces
 
 type Bucket = ByteString
 
@@ -33,22 +33,22 @@ data Config = Config {
     } deriving (Show, Eq)
 
 
-class Store a where
-    open  :: Config -> IO a
-    close :: a -> IO ()
-    init :: a -> DBName -> IO ()
-    query :: DBName -> Query -> a -> IO Value
-    write :: forall b . (Show b, Allowed b) => DBName -> b ->  a -> IO Value
+class Store handle where
+    open  :: Config -> IO handle
+    close :: handle -> IO ()
+    init  :: handle -> DBName -> IO ()
+    query :: DBName -> Query -> handle -> IO Value
+    write :: forall points . (Show points, Allowed points) => DBName -> points ->  handle -> IO Value
 
-class Allowed b where
-    construct :: b -> [Point]
-    
+class Allowed points where
+    construct :: points -> [Point]
+
 
 newtype DBName = DBName String deriving (Show, Eq)
 
 data Query = Query Bucket
   deriving (Show, Eq)
-         
+
 instance PathPiece Query where
     fromPathPiece x = Just (Query $ encodeUtf8 x)
     toPathPiece (Query x) = decodeUtf8 x

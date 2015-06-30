@@ -1,13 +1,13 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Main where
 
-import Types
-import Point
-import Store
-import Web.Spock.Safe
-import Control.Monad.IO.Class
-import Data.Aeson
-import qualified Database.LevelDB.Higher  as LDB
+import           Control.Monad.IO.Class
+import           Data.Aeson
+import qualified Database.LevelDB.Higher as LDB
+import           Point
+import           Store
+import           Types
+import           Web.Spock.Safe
 
 conf = Config "./databases"
 
@@ -21,7 +21,7 @@ main = do
 
 type App = SpockM DB String Config ()
 
-web :: App 
+web :: App
 web = do
     post "/write" $ do
         b <- body
