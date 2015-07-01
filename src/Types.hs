@@ -1,5 +1,5 @@
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE GADTs #-}
+{-# LANGUAGE RankNTypes #-}
 module Types where
 
 import           Data.Aeson
@@ -39,15 +39,11 @@ data Config = Config
     , base  :: DBName
     } deriving (Show, Eq)
 
-data Context = Context
+
+data DB = DB
   { config    :: Config 
   , currentDB :: DBName
   }
-
-type Base = StateT Context IO
-
-runBase :: HasSpock m => StateT (SpockConn m) IO a -> m a
-runBase = runQuery . ST.evalStateT
 
 type Home = FilePath
 
@@ -55,9 +51,12 @@ class Store handle where
     open   :: Config -> IO handle
     close  :: handle -> IO ()
     initDB :: Config -> DBName -> IO handle
+    write  :: forall points . (Show points, Construct points) => points -> handle -> IO Value
+    query  :: Query -> handle -> IO Value
 
 class Construct points where
     construct :: points -> Constructed
+
 
 type Key = ByteString
 type Values = ByteString
