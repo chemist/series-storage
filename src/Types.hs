@@ -1,4 +1,5 @@
-{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE GADTs #-}
 module Types where
 
 import           Data.Aeson
@@ -8,7 +9,12 @@ import           Data.Map.Strict       (Map)
 import           Data.Text.Encoding
 import           Data.Time.Clock
 import           Data.Time.Format
+import           Prelude               hiding (FilePath)
+import           Turtle                (FilePath)
 import           Web.PathPieces
+import qualified Control.Monad.State.Strict as ST
+import Control.Monad.State.Strict (StateT)
+import           Web.Spock.Safe (runQuery, HasSpock(..))
 
 type Bucket = ByteString
 
@@ -28,20 +34,37 @@ instance Show Point where
 class Stored a where
     parse :: ByteString -> Either String a
 
-data Config = Config {
-    basePath :: FilePath
+data Config = Config 
+    { home  :: FilePath
+    , base  :: DBName
     } deriving (Show, Eq)
 
+data Context = Context
+  { config    :: Config 
+  , currentDB :: DBName
+  }
+
+type Base = StateT Context IO
+
+runBase :: HasSpock m => StateT (SpockConn m) IO a -> m a
+runBase = runQuery . ST.evalStateT
+
+type Home = FilePath
 
 class Store handle where
-    open  :: Config -> IO handle
-    close :: handle -> IO ()
-    init  :: handle -> DBName -> IO ()
-    query :: DBName -> Query -> handle -> IO Value
-    write :: forall points . (Show points, Allowed points) => DBName -> points ->  handle -> IO Value
+    open   :: Config -> IO handle
+    close  :: handle -> IO ()
+    initDB :: Config -> DBName -> IO handle
 
-class Allowed points where
-    construct :: points -> [Point]
+class Construct points where
+    construct :: points -> Constructed
+
+type Key = ByteString
+type Values = ByteString
+
+data Constructed = Single Key Values
+                 | Many [Constructed]
+                 deriving (Show, Eq)
 
 
 newtype DBName = DBName String deriving (Show, Eq)

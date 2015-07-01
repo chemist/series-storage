@@ -8,30 +8,34 @@ import           Point
 import           Store
 import           Types
 import           Web.Spock.Safe
+import qualified Control.Monad.State.Strict as ST
 
-conf = Config "./databases"
+conf = Config "./databases" (DBName "base")
+
+context :: Context
+context = Context conf db
 
 db = DBName "db"
 
 main :: IO ()
 main = do
-    let db = PCConn (ConnBuilder (open conf :: IO DB) close (PoolCfg 1 1 100))
+    let db = PCConn (ConnBuilder (open conf) (close) (PoolCfg 1 1 100))
     let sessions = SessionCfg "app" 100 0 False "hello" Nothing
     runSpock 8080 $ spock sessions db conf web
 
-type App = SpockM DB String Config ()
+type App = SpockM Context String Config ()
 
 web :: App
 web = do
     post "/write" $ do
         b <- body
         let Right p = parse b :: Either String Point
-        result <- runQuery (write db p)
+        result <- runBase (write p)
         liftIO $ print result
         bytes b
     get "/query" $ do
         q <- param' "q"
-        result <- runQuery (query db q)
+        result <- runBase (query q)
         liftIO $ print result
 
 

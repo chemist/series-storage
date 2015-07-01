@@ -32,5 +32,6 @@ executable series-storage
                      , mtl
                      , path-pieces
                      , text
+                     , turtle
   hs-source-dirs:      src
   default-language:    Haskell2010
