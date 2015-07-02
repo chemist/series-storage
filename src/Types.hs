@@ -13,6 +13,7 @@ import           Prelude               hiding (FilePath)
 import           Turtle                (FilePath)
 import           Web.PathPieces
 import qualified Control.Monad.State.Strict as ST
+import qualified Control.Monad.Reader as R
 import Control.Monad.State.Strict (StateT)
 import           Web.Spock.Safe (runQuery, HasSpock(..))
 
@@ -34,8 +35,10 @@ instance Show Point where
 class Stored a where
     parse :: ByteString -> Either String a
 
+type Home = FilePath
+
 data Config = Config 
-    { home  :: FilePath
+    { home  :: Home
     , base  :: DBName
     } deriving (Show, Eq)
 
@@ -45,7 +48,7 @@ data DB = DB
   , currentDB :: DBName
   }
 
-type Home = FilePath
+type WithDB = R.ReaderT DB IO
 
 class Store handle where
     open   :: Config -> IO handle
@@ -55,7 +58,7 @@ class Store handle where
     query  :: Query -> handle -> IO Value
 
 class Construct points where
-    construct :: points -> Constructed
+    construct :: points -> WithDB Constructed
 
 
 type Key = ByteString
@@ -66,7 +69,7 @@ data Constructed = Single Key Values
                  deriving (Show, Eq)
 
 
-newtype DBName = DBName String deriving (Show, Eq)
+newtype DBName = DBName { unDBName :: String } deriving (Show, Eq)
 
 data Query = Query Bucket
   deriving (Show, Eq)
