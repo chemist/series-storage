@@ -10,7 +10,6 @@ import qualified Data.Map.Strict                  as Map
 import           Data.Time.Clock
 import           Data.Time.Clock.POSIX
 import           Data.Word
-import           System.IO.Unsafe                 (unsafePerformIO)
 import           Types
 
 import           Debug.Trace
@@ -60,8 +59,8 @@ pairsP = keyValue `A.sepBy` comma
 keyValue :: A.Parser (ByteString, ByteString)
 keyValue = (,) <$> (A.takeTill (== equalWord) <* equal) <*> escapedValue
 
-timeP :: A.Parser UTCTime
-timeP = (convertToUTCTime <$> (space *> decimal)) <|> return (unsafePerformIO getCurrentTime)
+timeP :: A.Parser (Maybe UTCTime)
+timeP = (pure . convertToUTCTime <$> (space *> decimal)) <|> return Nothing
 
 convertToUTCTime :: Integer -> UTCTime
 convertToUTCTime = posixSecondsToUTCTime . fromIntegral

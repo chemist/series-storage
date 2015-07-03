@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE FlexibleContexts #-}
 module Store where
 
 import           Data.Aeson hiding (decode, encode)
@@ -14,13 +15,16 @@ import Data.Text (unpack)
 import Control.Concurrent.MVar
 import Data.ByteString (ByteString)
 import Data.ByteString.Lazy (toStrict, fromStrict)
+import qualified Data.ByteString.Lazy as LBS
+import qualified Data.ByteString as B
 import qualified Data.ByteString.Builder as BS
 import qualified Data.Map.Strict as Map
 import Data.Foldable (foldlM)
 import Data.Word (Word32)
 import Data.Binary (decode, encode)
 import Data.Maybe
-import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
+import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds, posixSecondsToUTCTime)
+import           Data.Time.Clock
 
 {-- store schema:
 For every bucket create own directory with leveldb table
@@ -38,27 +42,33 @@ instance Store DB where
            else initDB conf (base conf)
     close _ = liftIO $ print "close db"
     initDB = initDB'
-    write = R.runReaderT . write' 
-    query = R.runReaderT . query' 
 
-write'  :: forall points . (Show points, Construct points) => points -> WithDB Value
-write' points = do
-    liftIO $ print $ "write query: "
-    liftIO $ print points
+write  :: forall points . (Show points, Construct points) => points -> WithDB Value
+write points = do
+--    liftIO $ print $ "write query: "
+--    liftIO $ print points
     bs <- construct points
-    liftIO $ print bs
+    mapM_ write' $ Map.toList bs
+--    liftIO $ print bs
     return Null
+    where
+      write' :: (Bucket, Constructed) -> WithDB ()
+      write' (bucket, Single key val) = withKeySpace bucket $ LDB.put key val 
+      write' (bucket, Many xs) = withKeySpace bucket $ LDB.runBatch $ mapM_ (\(Single key val) -> putB key val) xs
 
-query'  :: Query -> WithDB Value
-query' (Query y) = do
-    liftIO $ print $ "read query: " ++ show y
+query  :: Query -> WithDB Value
+query (Query y) = do
+    (k,v):all <- withKeySpace "cpu_load" (scan "" queryItems)
+    -- liftIO $ print $ "read query: " ++ show all
+    liftIO $ print $ "read query: " ++ show k
+    _ <- unconstruct (Single k v) :: WithDB Point
     return Null
 
 -- initDB
 -- create folder for database
 initDB' :: Config -> DBName -> IO DB
 initDB' conf db = do
-    (isHomeOk, isBaseOk) <- testBase conf
+    (isHomeOk, isBaseOk) <- liftIO $ testBase conf
     unless isHomeOk $ mkdir $ home conf 
     let basePath = home conf </> (fromString $ unDBName db)
         buckets = basePath </> "buckets"
@@ -71,18 +81,26 @@ initDB' conf db = do
             LDB.delete "init"
     return $ DB conf db
 
-fpToStr :: FilePath -> String
-fpToStr = either unpack unpack . toText
 
 
 instance Construct Point where
     construct x = do
         bucketsFilePath <- askBucketsFilePath
         tags <- makeTagsBS x
-        let convertTime = BS.word32BE . toEnum . truncate . utcTimeToPOSIXSeconds . time 
-        let key =  toStrict . BS.toLazyByteString $ convertTime x <> tags
+        let convertTime = BS.word32BE . toEnum . truncate . utcTimeToPOSIXSeconds  
+        liftIO $ print x
+        t <- liftIO $ maybe getCurrentTime return (time x)
+        liftIO $ print (BS.toLazyByteString $ convertTime t)
+        let key =  toStrict . BS.toLazyByteString $ convertTime t <> tags
             val = toStrict $ encode $ Map.toAscList (values x)
-        return $ Single key val
+        return $ Map.singleton (bucket x) (Single key val)
+    unconstruct (Single key val) = do
+        bucketsFilePath <- askBucketsFilePath
+        let unpackTime x = posixSecondsToUTCTime . toEnum . fromEnum $ x 
+            time = unpackTime $ (decode . fromStrict $ B.take 4 key :: Word32)
+        liftIO $ print (decode . fromStrict $ B.take 4 key :: Word32)
+        liftIO $ print time
+        return $ undefined
 
 askBucketsFilePath :: WithDB FilePath
 askBucketsFilePath = do
@@ -98,15 +116,26 @@ makeTagsBS point =  tags
         v <- askValId val
         return $ body <> (BS.word32BE k) <> (BS.word32BE v)
 
-askKeyId :: Key -> WithDB Word32
-askKeyId key = do
-    bucketsFilePath <- fpToStr <$> askBucketsFilePath
-    liftIO $ runCreateLevelDB bucketsFilePath "___keys" $ do
-        keyId <- LDB.get key
-        case keyId of
-             Just k -> return . decode . fromStrict $ k
-             Nothing -> addNewKey key
+keyById :: ByteString -> WithDB Key
+keyById i = liftLevelDB $ withKeySpace "id -> key" $ do
+    key <- LDB.get i
+    case key of
+         Just k -> return k 
+         Nothing -> error "unknown id key"
 
+valById :: ByteString -> WithDB Values
+valById i = liftLevelDB $ withKeySpace "id -> value" $ do
+    key <- LDB.get i
+    case key of
+         Just k -> return k 
+         Nothing -> error "unknown id value"
+
+askKeyId :: Key -> WithDB Word32
+askKeyId key = liftLevelDB $ withKeySpace "key -> id" $ do
+    keyId <- LDB.get key
+    case keyId of
+         Just k -> return . decode . fromStrict $ k
+         Nothing -> addNewKey key
 
 addNewKey :: Key -> LDB.LevelDB Word32
 addNewKey key = do
@@ -114,18 +143,17 @@ addNewKey key = do
     let maxId = maybe (1 :: Word32) (decode . fromStrict) mmaxId
         nextId = succ maxId :: Word32
     LDB.put key (toStrict . encode $ maxId )
+    withKeySpace "id -> key" $ LDB.put (toStrict . encode $ maxId) key
     LDB.put "___max___key___id___" (toStrict . encode $ maxId)
     return $ succ maxId
 
 
 askValId :: Values -> WithDB Word32
-askValId val = do
-    bucketsFilePath <- fpToStr <$> askBucketsFilePath
-    liftIO $ runCreateLevelDB bucketsFilePath "___values" $ do
-        valId <- LDB.get val
-        case valId of
-             Just k -> return . decode . fromStrict $ k
-             Nothing -> addNewVal val
+askValId val = liftLevelDB $ withKeySpace "value -> id" $ do
+    valId <- LDB.get val
+    case valId of
+         Just k -> return . decode . fromStrict $ k
+         Nothing -> addNewVal val
 
 addNewVal :: Key -> LDB.LevelDB Word32
 addNewVal key = do
@@ -133,11 +161,17 @@ addNewVal key = do
     let maxId = maybe (1 :: Word32) (decode . fromStrict) mmaxId
         nextId = succ maxId :: Word32
     LDB.put key (toStrict . encode $ maxId )
+    withKeySpace "id -> value" $ LDB.put key (toStrict . encode $ maxId) 
     LDB.put "___max___val___id___" (toStrict . encode $ maxId)
     return $ succ maxId
 
 instance Construct [Point] where
-    construct xs = Many <$> mapM construct xs
+    construct xs = foldl1 (Map.unionWith fun) <$> mapM construct xs
+      where
+      fun x@Single{} y@Single{} = Many [x,y]
+      fun (Many xs) y@Single{} = Many (y:xs)
+      fun y@Single{} (Many xs)  = Many (y:xs)
+      fun (Many ys) (Many xs)  = Many $ xs ++ ys
 
 testBase :: Config -> IO (Bool, Bool)
 testBase conf = (,) <$> testdir (home conf) <*> testdir (home conf </> fromString (unDBName $ base conf))
