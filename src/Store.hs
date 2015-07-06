@@ -25,6 +25,7 @@ import Data.Binary (decode, encode)
 import Data.Maybe
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds, posixSecondsToUTCTime)
 import           Data.Time.Clock
+import Pack
 
 {-- store schema:
 For every bucket create own directory with leveldb table
@@ -58,10 +59,10 @@ write points = do
 
 query  :: Query -> WithDB Value
 query (Query y) = do
-    (k,v):all <- withKeySpace "cpu_load" (scan "" queryItems)
-    -- liftIO $ print $ "read query: " ++ show all
-    liftIO $ print $ "read query: " ++ show k
-    _ <- unconstruct (Single k v) :: WithDB Point
+    all <-  map (uncurry Single) <$> withKeySpace "cpu_load" (scan "" queryItems)
+--     liftIO $ print $ "read query: " ++ show all
+    r <- unconstruct (Many all) :: WithDB [Point]
+    liftIO $ print r
     return Null
 
 -- initDB
@@ -81,97 +82,11 @@ initDB' conf db = do
             LDB.delete "init"
     return $ DB conf db
 
-
-
-instance Construct Point where
-    construct x = do
-        bucketsFilePath <- askBucketsFilePath
-        tags <- makeTagsBS x
-        let convertTime = BS.word32BE . toEnum . truncate . utcTimeToPOSIXSeconds  
-        liftIO $ print x
-        t <- liftIO $ maybe getCurrentTime return (time x)
-        liftIO $ print (BS.toLazyByteString $ convertTime t)
-        let key =  toStrict . BS.toLazyByteString $ convertTime t <> tags
-            val = toStrict $ encode $ Map.toAscList (values x)
-        return $ Map.singleton (bucket x) (Single key val)
-    unconstruct (Single key val) = do
-        bucketsFilePath <- askBucketsFilePath
-        let unpackTime x = posixSecondsToUTCTime . toEnum . fromEnum $ x 
-            time = unpackTime $ (decode . fromStrict $ B.take 4 key :: Word32)
-        liftIO $ print (decode . fromStrict $ B.take 4 key :: Word32)
-        liftIO $ print time
-        return $ undefined
-
 askBucketsFilePath :: WithDB FilePath
 askBucketsFilePath = do
     db <- R.ask
     return $ (home $ config db) </> (fromString $ unDBName $ currentDB db) </> "buckets"
 
-makeTagsBS :: Point -> WithDB BS.Builder
-makeTagsBS point =  tags
-  where 
-    tags = foldlM build "" (Map.toAscList $ keys point)
-    build body (key, val) = do
-        k <- askKeyId key
-        v <- askValId val
-        return $ body <> (BS.word32BE k) <> (BS.word32BE v)
-
-keyById :: ByteString -> WithDB Key
-keyById i = liftLevelDB $ withKeySpace "id -> key" $ do
-    key <- LDB.get i
-    case key of
-         Just k -> return k 
-         Nothing -> error "unknown id key"
-
-valById :: ByteString -> WithDB Values
-valById i = liftLevelDB $ withKeySpace "id -> value" $ do
-    key <- LDB.get i
-    case key of
-         Just k -> return k 
-         Nothing -> error "unknown id value"
-
-askKeyId :: Key -> WithDB Word32
-askKeyId key = liftLevelDB $ withKeySpace "key -> id" $ do
-    keyId <- LDB.get key
-    case keyId of
-         Just k -> return . decode . fromStrict $ k
-         Nothing -> addNewKey key
-
-addNewKey :: Key -> LDB.LevelDB Word32
-addNewKey key = do
-    mmaxId <- LDB.get "___max___key___id___" :: LDB.LevelDB (Maybe ByteString)
-    let maxId = maybe (1 :: Word32) (decode . fromStrict) mmaxId
-        nextId = succ maxId :: Word32
-    LDB.put key (toStrict . encode $ maxId )
-    withKeySpace "id -> key" $ LDB.put (toStrict . encode $ maxId) key
-    LDB.put "___max___key___id___" (toStrict . encode $ maxId)
-    return $ succ maxId
-
-
-askValId :: Values -> WithDB Word32
-askValId val = liftLevelDB $ withKeySpace "value -> id" $ do
-    valId <- LDB.get val
-    case valId of
-         Just k -> return . decode . fromStrict $ k
-         Nothing -> addNewVal val
-
-addNewVal :: Key -> LDB.LevelDB Word32
-addNewVal key = do
-    mmaxId <- LDB.get "___max___val___id___" :: LDB.LevelDB (Maybe ByteString)
-    let maxId = maybe (1 :: Word32) (decode . fromStrict) mmaxId
-        nextId = succ maxId :: Word32
-    LDB.put key (toStrict . encode $ maxId )
-    withKeySpace "id -> value" $ LDB.put key (toStrict . encode $ maxId) 
-    LDB.put "___max___val___id___" (toStrict . encode $ maxId)
-    return $ succ maxId
-
-instance Construct [Point] where
-    construct xs = foldl1 (Map.unionWith fun) <$> mapM construct xs
-      where
-      fun x@Single{} y@Single{} = Many [x,y]
-      fun (Many xs) y@Single{} = Many (y:xs)
-      fun y@Single{} (Many xs)  = Many (y:xs)
-      fun (Many ys) (Many xs)  = Many $ xs ++ ys
 
 testBase :: Config -> IO (Bool, Bool)
 testBase conf = (,) <$> testdir (home conf) <*> testdir (home conf </> fromString (unDBName $ base conf))
