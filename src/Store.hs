@@ -21,7 +21,6 @@ import qualified Data.ByteString.Builder as BS
 import qualified Data.Map.Strict as Map
 import Data.Foldable (foldlM)
 import Data.Word (Word32)
-import Data.Binary (decode, encode)
 import Data.Maybe
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds, posixSecondsToUTCTime)
 import           Data.Time.Clock
